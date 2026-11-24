@@ -87,7 +87,7 @@
 
         #define taskYIELD_ANY_CORE_IF_USING_PREEMPTION( pxTCB ) \
     do {                                                        \
-        if( pxCurrentTCB->uxPriority < ( pxTCB )->uxPriority )  \
+        if( pxCurrentTCB->uxPriority <= ( pxTCB )->uxPriority )  \
         {                                                       \
             portYIELD_WITHIN_API();                             \
         }                                                       \
@@ -205,9 +205,8 @@
             --uxTopPriority;                                                             \
         }                                                                                \
                                                                                          \
-        /* listGET_OWNER_OF_NEXT_ENTRY indexes through the list, so the tasks of \
-         * the  same priority get an equal share of the processor time. */                    \
-        listGET_OWNER_OF_NEXT_ENTRY( pxCurrentTCB, &( pxReadyTasksLists[ uxTopPriority ] ) ); \
+        /* Get the task at the head of the highest priority queue. */                    \
+        pxCurrentTCB = listGET_OWNER_OF_HEAD_ENTRY(&( pxReadyTasksLists[ uxTopPriority ] ) ); \
         uxTopReadyPriority = uxTopPriority;                                                   \
     } while( 0 ) /* taskSELECT_HIGHEST_PRIORITY_TASK */
     #else /* if ( configNUMBER_OF_CORES == 1 ) */
@@ -288,7 +287,8 @@
     do {                                                                                                   \
         traceMOVED_TASK_TO_READY_STATE( pxTCB );                                                           \
         taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                                                \
-        listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ); \
+        ( pxTCB )->xStateListItem.xItemValue=(pxTCB)->uxTieBreaker;                                        \
+        vListInsert( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) );    \
         tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB );                                                      \
     } while( 0 )
 /*-----------------------------------------------------------*/
@@ -389,6 +389,7 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
     ListItem_t xStateListItem;                  /**< The list that the state list item of a task is reference from denotes the state of that task (Ready, Blocked, Suspended ). */
     ListItem_t xEventListItem;                  /**< Used to reference a task from an event list. */
     UBaseType_t uxPriority;                     /**< The priority of the task.  0 is the lowest priority. */
+    UBaseType_t uxTieBreaker;
     StackType_t * pxStack;                      /**< Points to the start of the stack. */
     #if ( configNUMBER_OF_CORES > 1 )
         volatile BaseType_t xTaskRunState;      /**< Used to identify the core the task is running on, if the task is running. Otherwise, identifies the task's state - not running or yielding. */
@@ -2898,7 +2899,7 @@ STATIC void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                             /* The priority of a task other than the currently
                              * running task is being raised.  Is the priority being
                              * raised above that of the running task? */
-                            if( uxNewPriority > pxCurrentTCB->uxPriority )
+                            if( uxNewPriority >= pxCurrentTCB->uxPriority )
                             {
                                 xYieldRequired = pdTRUE;
                             }
@@ -3532,7 +3533,7 @@ STATIC void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                     {
                         /* Ready lists can be accessed so move the task from the
                          * suspended list to the ready list directly. */
-                        if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                        if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
                         {
                             xYieldRequired = pdTRUE;
 
@@ -4109,7 +4110,7 @@ BaseType_t xTaskResumeAll( void )
                         {
                             /* If the moved task has a priority higher than the current
                              * task then a yield must be performed. */
-                            if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                            if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
                             {
                                 xYieldPendings[ xCoreID ] = pdTRUE;
                             }
@@ -4790,7 +4791,7 @@ BaseType_t xTaskCatchUpTicks( TickType_t xTicksToCatchUp )
                         /* Preemption is on, but a context switch should only be
                          * performed if the unblocked task has a priority that is
                          * higher than the currently executing task. */
-                        if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                        if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
                         {
                             /* Pend the yield to be performed when the scheduler
                              * is unsuspended. */
@@ -4941,7 +4942,7 @@ BaseType_t xTaskIncrementTick( void )
                              * processing time (which happens when both
                              * preemption and time slicing are on) is
                              * handled below.*/
-                            if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                            if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
                             {
                                 xSwitchRequired = pdTRUE;
                             }
@@ -5552,7 +5553,7 @@ BaseType_t xTaskRemoveFromEventList( const List_t * const pxEventList )
 
     #if ( configNUMBER_OF_CORES == 1 )
     {
-        if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
+        if( pxUnblockedTCB->uxPriority >= pxCurrentTCB->uxPriority )
         {
             /* Return true if the task removed from the event list has a higher
              * priority than the calling task.  This allows the calling task to know if
@@ -5635,7 +5636,7 @@ void vTaskRemoveFromUnorderedEventList( ListItem_t * pxEventListItem,
 
     #if ( configNUMBER_OF_CORES == 1 )
     {
-        if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
+        if( pxUnblockedTCB->uxPriority >= pxCurrentTCB->uxPriority )
         {
             /* The unblocked task has a priority above that of the calling task, so
              * a context switch is required.  This function is called with the
@@ -8262,7 +8263,7 @@ TickType_t uxTaskResetEventItemValue( void )
 
                 #if ( configNUMBER_OF_CORES == 1 )
                 {
-                    if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                    if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
                     {
                         /* The notified task has a priority above the currently
                          * executing task so a yield is required. */
@@ -8396,7 +8397,7 @@ TickType_t uxTaskResetEventItemValue( void )
 
                 #if ( configNUMBER_OF_CORES == 1 )
                 {
-                    if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                    if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
                     {
                         /* The notified task has a priority above the currently
                          * executing task so a yield is required. */
